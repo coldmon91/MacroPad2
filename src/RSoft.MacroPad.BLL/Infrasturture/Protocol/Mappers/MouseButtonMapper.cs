@@ -7,7 +7,6 @@ namespace RSoft.MacroPad.BLL.Infrasturture.Protocol.Mappers
 {
     public static class MouseButtonMapper
     {
-        static readonly List<(MouseButton Key, VirtualKey Value)> _map = new List<(MouseButton, VirtualKey)>();
         static readonly List<(MouseButton Key, byte Button, byte Scroll)> _byteMap = new List<(MouseButton, byte, byte)>();
         static MouseButtonMapper()
         {
@@ -16,12 +15,9 @@ namespace RSoft.MacroPad.BLL.Infrasturture.Protocol.Mappers
             {
                 var val = (MouseButton)member.GetValue(null);
 
-                var attr = member.GetCustomAttribute<VirtualKeyMapAttribute>();
-                _map.Add((val, attr.Key));
-
                 var mAttr = member.GetCustomAttribute<MouseValuesAttribute>();
                 _byteMap.Add((val, mAttr.Buttons, mAttr.Scroll));
-                
+
             }
         }
 

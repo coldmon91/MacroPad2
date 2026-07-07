@@ -1,0 +1,28 @@
+# 6-key 1-knob macro pad bindings for Claude Code control
+device: auto
+layer: 1
+
+bindings:
+  - button: 1
+    keys: Question M O D E L SpaceKey     # types "/model "
+
+  - button: 2
+    keys: Question R E W I N D SpaceKey   # types "/rewind "
+
+  - button: 3
+    keys: Question R E S U M E SpaceKey   # types "/resume "
+
+  - button: 4
+    keys: Question C O M P A C T SpaceKey # types "/compact "
+
+  - button: 5
+    keys: Ctrl+C                          # sends Ctrl+C
+
+  - button: 6
+    keys: Question N E W SpaceKey         # types "/new "
+
+  - knob: 1
+    right:
+      mouse: ScrollUp
+    left:
+      mouse: ScrollDown

@@ -84,7 +84,7 @@ internal static class Program
             return 0;
         }
 
-        using var usb = new HidSharpUsb
+        using var usb = new RawWinHidUsb
         {
             SupportedDevices = configuration.SupportedDevices
                 .Where(device => profiles.Any(profile => profile.VendorId == device.VendorId && profile.ProductId == device.ProductId))
