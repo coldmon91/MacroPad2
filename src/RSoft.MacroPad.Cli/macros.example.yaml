@@ -1,0 +1,35 @@
+# Select "auto" to use the first supported device, or set an explicit decimal or hex VID:PID.
+device: auto
+layer: 0
+
+bindings:
+  # Button 1 sends a two-stroke keyboard sequence.
+  - button: 1
+    keys: Ctrl+Shift+C Enter
+
+  # Button 2 sends a media key.
+  - button: 2
+    media: PlayPause
+
+  # Button 3 sends a mouse button with a keyboard modifier.
+  - button: 3
+    mouse: Left
+    modifiers: Ctrl
+
+  # Button 4 configures a function key.
+  - button: 4
+    keys: F5
+
+  # Knob 1 maps rotation and push actions separately.
+  - knob: 1
+    left:
+      media: VolDn
+    push:
+      media: VolMute
+    right:
+      media: VolUp
+
+  # LED binding targets the selected layer.
+  - led:
+      mode: Mode1
+      color: Blue
