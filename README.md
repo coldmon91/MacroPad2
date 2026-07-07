@@ -69,6 +69,78 @@ Select the button or scroll direction you need and add modifier keys as needed
 #### Saving to keypad
 To save your settings just click the upload button  ![image](https://github.com/rOzzy1987/MacroPad/assets/617600/79128933-1b53-419a-a90d-3a04515bce8c)
 
+## CLI (RSoft.MacroPad.Cli)
+
+`RSoft.MacroPad.Cli` is a headless command-line tool that applies key/knob mappings
+from a YAML file, so you can version-control your layout and re-apply it without the GUI.
+
+### Build & run
+
+```
+dotnet build src/RSoft.MacroPad.Cli/RSoft.MacroPad.Cli.csproj -c Release
+dotnet src/RSoft.MacroPad.Cli/bin/Release/net6.0/RSoft.MacroPad.Cli.dll <command>
+```
+
+### Commands
+
+| Command | Description |
+| --- | --- |
+| `list-devices` | List all connected HID devices (VID/PID, usage page, product name). |
+| `apply <file.yaml>` | Write the mappings from the YAML file to a supported macro pad. |
+| `apply <file.yaml> --dry-run` | Build the reports and print them as hex, without opening or writing any device. |
+
+Always try `--dry-run` first to review the generated reports before writing to hardware.
+
+### YAML format
+
+```yaml
+# "auto" uses the first supported device, or set an explicit VID:PID (decimal or hex).
+device: auto
+layer: 1
+
+bindings:
+  # A button sends a keyboard sequence: space-separated strokes, each "Mod+Mod+Key".
+  - button: 1
+    keys: Question M O D E L SpaceKey     # types "/model "
+
+  - button: 5
+    keys: Ctrl+C                          # a single Ctrl+C stroke
+
+  # A knob maps rotation and push independently.
+  - knob: 1
+    right:
+      mouse: ScrollUp
+    left:
+      mouse: ScrollDown
+    push:
+      media: PlayPause
+```
+
+- **keys**: whitespace-separated strokes. Each stroke is optional modifiers plus one key,
+  joined with `+`, e.g. `Ctrl+Shift+F5`. Key names are `KeyCode` enum names such as
+  `A`, `D1`, `F5`, `Enter`, `SpaceKey`, `Question` (`/`), `Minus`. See
+  `src/RSoft.MacroPad.BLL/Infrasturture/Model/KeyCode.cs` for the full list.
+- **modifiers** (for keys inline, or the `modifiers:` field with `mouse`):
+  `Ctrl`, `Shift`, `Alt`, `Win`, plus left/right variants (`LCtrl`, `RCtrl`, ...).
+- **media**: a `MediaKey` enum name (e.g. `PlayPause`, `VolUp`, `VolDn`, `VolMute`).
+- **mouse**: a `MouseButton` enum name (`Left`, `Right`, `Middle`, `ScrollUp`, `ScrollDown`);
+  combine with `modifiers:` for click actions.
+- **led** (top-level, no button/knob): `mode` and `color` for the selected layer.
+- A **button** binding uses `keys`/`media`/`mouse` directly; a **knob** binding puts them
+  under `left`, `push`, and/or `right`.
+
+See `src/RSoft.MacroPad.Cli/macros.example.yaml` for a fuller example.
+
+### Device notes: 6-key 1-knob (VID 0x1189 / PID 0x8840)
+
+This CH55x-based pad needs a few device-specific corrections that the CLI already applies
+(magic byte, 1-based layer, knob key ids `0x10`~`0x12`, mouse-wheel encoding, and a raw
+overlapped-`WriteFile` path because the standard Windows HID libraries reject its writes).
+The full protocol is documented in [`doc/protocol-6key-1knob.md`](doc/protocol-6key-1knob.md).
+
+If the CLI cannot open your device, make sure `config.txt` points at the vendor-defined
+interface (`mi_00` for this pad, not `mi_01`).
+
 ## Contribute
 ### layouts.txt
 If you have a keypad that is not represented in this software, you can define your own layout in _layouts.txt_. If you do, and it works, please add it in a pull request, or just send it to me.
