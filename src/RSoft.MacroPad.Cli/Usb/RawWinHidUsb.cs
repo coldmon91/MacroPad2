@@ -50,29 +50,33 @@ public sealed class RawWinHidUsb : UsbBase, IDisposable
             return false;
         }
 
-        var bufferLength = _outputReportLength > 0 ? _outputReportLength : report.Data.Length + 1;
-        var buffer = new byte[bufferLength];
-        buffer[0] = report.ReportId;
-        Array.Copy(report.Data, 0, buffer, 1, Math.Min(report.Data.Length, buffer.Length - 1));
-
+        var buffer = BuildFrame(report.ReportId, report.Data);
         if (buffer.Length > 1 && buffer[1] == BllMagicByte)
         {
             buffer[1] = DeviceMagicByte;
         }
 
-        if (!WriteRaw(buffer))
+        // Write the binding, then the commit sequence the firmware needs to persist it:
+        // separator (03 AA AA), finalize (03 FD FE FF), terminator (03 AA AA).
+        if (!WriteRaw(buffer)
+            || !WriteRaw(BuildFrame(DeviceReportId, 0xAA, 0xAA))
+            || !WriteRaw(BuildFrame(DeviceReportId, DeviceMagicByte, 0xFE, 0xFF))
+            || !WriteRaw(BuildFrame(DeviceReportId, 0xAA, 0xAA)))
         {
             return false;
         }
 
-        var commit = new byte[bufferLength];
-        commit[0] = DeviceReportId;
-        commit[1] = DeviceMagicByte;
-        commit[2] = 0xFE;
-        commit[3] = 0xFF;
-        var committed = WriteRaw(commit);
         Thread.Sleep(CommitDelayMs);
-        return committed;
+        return true;
+    }
+
+    private byte[] BuildFrame(byte reportId, params byte[] payload)
+    {
+        var length = _outputReportLength > 0 ? _outputReportLength : payload.Length + 1;
+        var buffer = new byte[length];
+        buffer[0] = reportId;
+        Array.Copy(payload, 0, buffer, 1, Math.Min(payload.Length, buffer.Length - 1));
+        return buffer;
     }
 
     private bool WriteRaw(byte[] buffer)

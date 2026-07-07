@@ -2,12 +2,18 @@ using RSoft.MacroPad.BLL.Infrasturture;
 using RSoft.MacroPad.BLL.Infrasturture.Model;
 using RSoft.MacroPad.BLL.Infrasturture.Physical;
 using RSoft.MacroPad.BLL.Infrasturture.Protocol;
+using RSoft.MacroPad.BLL.Infrasturture.Protocol.Mappers;
 using RSoft.MacroPad.BLL.Infrasturture.UsbDevice;
 
 namespace RSoft.MacroPad.Cli.Config;
 
 public sealed class BindingApplier
 {
+    // Device-specific key id for the single knob (see doc/protocol-6key-1knob.md):
+    // knob N -> left/push/right = 0x10 + (N-1)*3 + {0,1,2}. The shared BLL mapper
+    // uses 0x0D~0x0F, which is wrong for this hardware, so knob ids are corrected here.
+    private const byte KnobKeyIdBase = 0x10;
+
     private readonly ComposerRepository _composerRepository = new();
 
     public IReadOnlyList<Report> BuildReports(
@@ -24,7 +30,7 @@ public sealed class BindingApplier
 
         foreach (var binding in config.Bindings)
         {
-            reports.AddRange(BuildBindingReports(composer, layout, layer, binding));
+            reports.AddRange(BuildBindingReports(composer, layout, layer, binding, version));
         }
 
         return reports;
@@ -46,7 +52,8 @@ public sealed class BindingApplier
         IReportComposer composer,
         KeyboardLayout layout,
         byte layer,
-        BindingConfig binding)
+        BindingConfig binding,
+        byte reportId)
     {
         if (binding.Button.HasValue && binding.Knob.HasValue)
         {
@@ -73,7 +80,7 @@ public sealed class BindingApplier
 
             var action = ToButtonAction(binding.Button.Value);
             ValidateActionExists(layout, action, $"button {binding.Button.Value}");
-            return BuildActionReports(composer, action, layer, binding);
+            return BuildActionReports(composer, action, layer, binding, reportId);
         }
 
         if (binding.Knob.HasValue)
@@ -83,7 +90,7 @@ public sealed class BindingApplier
                 throw new InvalidOperationException($"Knob {binding.Knob.Value} must define actions under left, push, or right.");
             }
 
-            return BuildKnobReports(composer, layout, layer, binding);
+            return BuildKnobReports(composer, layout, layer, binding, reportId);
         }
 
         throw new InvalidOperationException("Each binding must target button, knob, or top-level led.");
@@ -93,14 +100,15 @@ public sealed class BindingApplier
         IReportComposer composer,
         KeyboardLayout layout,
         byte layer,
-        BindingConfig binding)
+        BindingConfig binding,
+        byte reportId)
     {
         var knob = binding.Knob!.Value;
         var reports = new List<Report>();
 
-        AddKnobDirection(composer, layout, layer, reports, knob, "Left", binding.Left);
-        AddKnobDirection(composer, layout, layer, reports, knob, "Push", binding.Push);
-        AddKnobDirection(composer, layout, layer, reports, knob, "Right", binding.Right);
+        AddKnobDirection(composer, layout, layer, reports, knob, "Left", binding.Left, reportId);
+        AddKnobDirection(composer, layout, layer, reports, knob, "Push", binding.Push, reportId);
+        AddKnobDirection(composer, layout, layer, reports, knob, "Right", binding.Right, reportId);
 
         if (reports.Count == 0)
         {
@@ -117,7 +125,8 @@ public sealed class BindingApplier
         List<Report> reports,
         int knob,
         string direction,
-        ActionConfig? actionConfig)
+        ActionConfig? actionConfig,
+        byte reportId)
     {
         if (actionConfig == null)
         {
@@ -126,14 +135,15 @@ public sealed class BindingApplier
 
         var action = ToKnobAction(knob, direction);
         ValidateActionExists(layout, action, $"knob {knob} {direction.ToLowerInvariant()}");
-        reports.AddRange(BuildActionReports(composer, action, layer, actionConfig));
+        reports.AddRange(BuildActionReports(composer, action, layer, actionConfig, reportId));
     }
 
     private static IEnumerable<Report> BuildActionReports(
         IReportComposer composer,
         InputAction inputAction,
         byte layer,
-        BindingConfig binding)
+        BindingConfig binding,
+        byte reportId)
     {
         var actionConfig = new ActionConfig
         {
@@ -143,14 +153,15 @@ public sealed class BindingApplier
             Modifiers = binding.Modifiers
         };
 
-        return BuildActionReports(composer, inputAction, layer, actionConfig);
+        return BuildActionReports(composer, inputAction, layer, actionConfig, reportId);
     }
 
     private static IEnumerable<Report> BuildActionReports(
         IReportComposer composer,
         InputAction inputAction,
         byte layer,
-        ActionConfig actionConfig)
+        ActionConfig actionConfig,
+        byte reportId)
     {
         var actionCount = CountActions(actionConfig);
         if (actionCount != 1)
@@ -166,20 +177,90 @@ public sealed class BindingApplier
         if (!string.IsNullOrWhiteSpace(actionConfig.Keys))
         {
             var sequence = KeyStringParser.ParseKeySequence(actionConfig.Keys);
-            return composer.Key(inputAction, layer, delay: 0, sequence);
+            var reports = composer.Key(inputAction, layer, delay: 0, sequence);
+            return FixKnobKeyId(reports, inputAction);
         }
 
         if (!string.IsNullOrWhiteSpace(actionConfig.Media))
         {
-            return composer.Media(inputAction, layer, KeyStringParser.ParseMediaKey(actionConfig.Media));
+            var reports = composer.Media(inputAction, layer, KeyStringParser.ParseMediaKey(actionConfig.Media));
+            return FixKnobKeyId(reports, inputAction);
         }
 
-        return composer.Mouse(
-            inputAction,
-            layer,
-            KeyStringParser.ParseMouseButton(actionConfig.Mouse!),
-            KeyStringParser.ParseModifiers(actionConfig.Modifiers));
+        var button = KeyStringParser.ParseMouseButton(actionConfig.Mouse!);
+        var modifiers = KeyStringParser.ParseModifiers(actionConfig.Modifiers);
+        return new[] { BuildMouseReport(reportId, inputAction, layer, button, modifiers) };
     }
+
+    // Builds the device-correct mouse report. The shared BLL mouse encoding
+    // (KeyType.Multimedia, scroll byte at a different offset) does not work on this
+    // hardware; the layout below is the verified one (see doc/protocol-6key-1knob.md).
+    private static Report BuildMouseReport(
+        byte reportId,
+        InputAction inputAction,
+        byte layer,
+        MouseButton button,
+        Modifier modifiers)
+    {
+        var report = new MacroPadReport(reportId);
+        var data = report.Data;
+
+        data[0] = ProtocolMagic;               // wire[1]  bind command
+        data[1] = DeviceKeyId(inputAction);    // wire[2]  key id
+        data[2] = layer;                       // wire[3]  layer
+        data[3] = (byte)KeyType.Mouse;         // wire[4]  macro type = mouse
+
+        var scroll = button.Scroll();
+        if (scroll != 0)
+        {
+            data[9] = MouseActionWheel;        // wire[10] mouse action = wheel
+            data[10] = (byte)modifiers;        // wire[11] modifier
+            data[14] = scroll;                 // wire[15] wheel delta (0x01 up / 0xFF down)
+        }
+        else
+        {
+            data[9] = MouseActionClick;        // wire[10] mouse action = click
+            data[10] = (byte)modifiers;        // wire[11] modifier
+            data[11] = button.Button();        // wire[12] button mask
+        }
+
+        return report;
+    }
+
+    private static IEnumerable<Report> FixKnobKeyId(IEnumerable<Report> reports, InputAction inputAction)
+    {
+        if (!IsKnob(inputAction))
+        {
+            return reports;
+        }
+
+        var id = DeviceKeyId(inputAction);
+        var materialized = reports.ToArray();
+        foreach (var report in materialized)
+        {
+            // ExtendedReport stores the key id at Data[1]; override the BLL mapping.
+            report.Data[1] = id;
+        }
+
+        return materialized;
+    }
+
+    private static bool IsKnob(InputAction action)
+        => action >= InputAction.Knob1Left && action <= InputAction.Knob3Right;
+
+    private static byte DeviceKeyId(InputAction action)
+    {
+        if (IsKnob(action))
+        {
+            return (byte)(KnobKeyIdBase + ((int)action - (int)InputAction.Knob1Left));
+        }
+
+        return (byte)action; // Key1..Key12 map directly to 1..12.
+    }
+
+    private const byte ProtocolMagic = 0xFD;
+    private const byte MouseActionClick = 0x01;
+    private const byte MouseActionWheel = 0x03;
 
     private static void ValidateConfig(MacroConfig config, KeyboardLayout layout)
     {
