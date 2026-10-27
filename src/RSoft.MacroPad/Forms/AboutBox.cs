@@ -38,7 +38,7 @@ namespace RSoft.MacroPad.Forms
                         return titleAttribute.Title;
                     }
                 }
-                return System.IO.Path.GetFileNameWithoutExtension(Assembly.GetExecutingAssembly().CodeBase);
+                return Assembly.GetExecutingAssembly().GetName().Name;
             }
         }
 

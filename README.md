@@ -76,9 +76,11 @@ from a YAML file, so you can version-control your layout and re-apply it without
 
 ### Build & run
 
+Requires the .NET 10 SDK.
+
 ```
 dotnet build src/RSoft.MacroPad.Cli/RSoft.MacroPad.Cli.csproj -c Release
-dotnet src/RSoft.MacroPad.Cli/bin/Release/net6.0/RSoft.MacroPad.Cli.dll <command>
+dotnet src/RSoft.MacroPad.Cli/bin/Release/net10.0/RSoft.MacroPad.Cli.dll <command>
 ```
 
 ### Commands
