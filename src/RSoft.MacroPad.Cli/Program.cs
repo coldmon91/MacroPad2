@@ -1,7 +1,9 @@
+﻿using System.Globalization;
 using HidSharp;
 using RSoft.MacroPad.BLL.Infrasturture.Configuration;
 using RSoft.MacroPad.BLL.Infrasturture.Physical;
 using RSoft.MacroPad.Cli.Config;
+using RSoft.MacroPad.Cli.Diagnostics;
 using RSoft.MacroPad.Cli.Usb;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -24,6 +26,7 @@ internal static class Program
             {
                 "list-devices" => ListDevices(),
                 "apply" => Apply(args.Skip(1).ToArray()),
+                "dump-input" => DumpInput(args.Skip(1).ToArray()),
                 _ => Fail($"Unknown command '{args[0]}'.")
             };
         }
@@ -101,6 +104,129 @@ internal static class Program
         applier.Apply(macroConfig, connectedLayout, usb);
         Console.WriteLine($"Applied {macroConfig.Bindings.Count} binding(s) to {DeviceProfileResolver.FormatVidPid(usb.VendorId, usb.ProductId)} using layout '{connectedLayout.Name}'.");
         return 0;
+    }
+
+    /// <summary>
+    /// Streams the input reports the macro pad actually sends, so the bindings currently stored
+    /// in its flash can be identified by pressing each key. The device does not expose a read-back
+    /// command, so observing live input is the only way to inspect what is mapped.
+    /// </summary>
+    private static int DumpInput(string[] args)
+    {
+        var filter = new List<(ushort VendorId, ushort ProductId)>();
+        var seconds = 0;
+        var showRaw = false;
+        var all = false;
+
+        for (var index = 0; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--all":
+                    all = true;
+                    break;
+                case "--raw":
+                    showRaw = true;
+                    break;
+                case "--device":
+                    if (++index >= args.Length)
+                    {
+                        return Fail("--device requires a <vid>:<pid> value.");
+                    }
+
+                    if (!TryParseVidPid(args[index], out var device))
+                    {
+                        return Fail($"Invalid --device value '{args[index]}'. Use <vid>:<pid>, e.g. 0x1189:0x8840.");
+                    }
+
+                    filter.Add(device);
+                    break;
+                case "--seconds":
+                    if (++index >= args.Length || !int.TryParse(args[index], out seconds) || seconds <= 0)
+                    {
+                        return Fail("--seconds requires a positive integer.");
+                    }
+
+                    break;
+                default:
+                    return Fail($"Unknown dump-input option '{args[index]}'.");
+            }
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return Fail("dump-input requires Windows: it reads input through the Win32 Raw Input API.");
+        }
+
+        if (!all && filter.Count == 0)
+        {
+            filter.AddRange(LoadDeviceConfiguration().SupportedDevices
+                .Select(supported => (supported.VendorId, supported.ProductId))
+                .Distinct());
+        }
+
+        using var monitor = new RawInputMonitor(all ? [] : filter);
+        using var timeout = seconds > 0
+            ? new Timer(_ => monitor.RequestStop(), null, TimeSpan.FromSeconds(seconds), Timeout.InfiniteTimeSpan)
+            : null;
+
+        Console.CancelKeyPress += (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            monitor.RequestStop();
+        };
+
+        var eventCount = 0;
+        monitor.Run(inputEvent =>
+        {
+            eventCount++;
+            var raw = showRaw && inputEvent.RawData.Length > 0 ? $"  [{Convert.ToHexString(inputEvent.RawData)}]" : "";
+            Console.WriteLine(
+                $"{inputEvent.Timestamp:HH:mm:ss.fff} {inputEvent.Kind,-8} " +
+                $"{DeviceProfileResolver.FormatVidPid(inputEvent.VendorId, inputEvent.ProductId)} " +
+                $"{inputEvent.Collection,-5} {inputEvent.Description}{raw}");
+        }, () => PrintMonitoredDevices(monitor.MatchedDevices));
+
+        if (eventCount == 0)
+        {
+            Console.WriteLine("No input was received.");
+        }
+
+        return 0;
+    }
+
+    private static void PrintMonitoredDevices(IReadOnlyList<RawInputMonitor.DeviceIdentity> devices)
+    {
+        Console.WriteLine($"Monitoring {devices.Count} collection(s); press the keys to identify, Ctrl+C to stop.");
+        foreach (var device in devices)
+        {
+            Console.WriteLine(
+                $"  {DeviceProfileResolver.FormatVidPid(device.VendorId, device.ProductId)} {device.Collection,-5} " +
+                $"usage=0x{device.UsagePage:X2}/0x{device.Usage:X2}");
+        }
+
+        Console.WriteLine();
+    }
+
+    private static bool TryParseVidPid(string value, out (ushort VendorId, ushort ProductId) result)
+    {
+        result = default;
+        var parts = value.Split(':');
+        if (parts.Length != 2 || !TryParseId(parts[0], out var vendorId) || !TryParseId(parts[1], out var productId))
+        {
+            return false;
+        }
+
+        result = (vendorId, productId);
+        return true;
+    }
+
+    private static bool TryParseId(string value, out ushort result)
+    {
+        value = value.Trim();
+        return value.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+            ? ushort.TryParse(value[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out result)
+            : ushort.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
     }
 
     private static MacroConfig LoadMacroConfig(string yamlPath)
@@ -232,12 +358,21 @@ internal static class Program
         Usage:
           RSoft.MacroPad.Cli list-devices
           RSoft.MacroPad.Cli apply <file.yaml> [--dry-run]
+          RSoft.MacroPad.Cli dump-input [--device <vid>:<pid>] [--all] [--seconds <n>] [--raw]
 
         Commands:
           list-devices             List connected HID devices.
           apply <file.yaml>        Apply macro bindings to a supported macro pad.
           apply <file.yaml> --dry-run
                                    Build reports and print hex output without opening or writing a HID device.
+          dump-input               Print input reports as they arrive, to identify what each key and the knob
+                                   currently send. The device has no read-back command, so this is the only
+                                   way to inspect the bindings stored in its flash. Windows only.
+                                   --device <vid>:<pid>  Watch this device only (decimal or 0x-prefixed hex).
+                                                         Defaults to every device listed in config.txt.
+                                   --all                 Watch every raw input device, not just supported ones.
+                                   --seconds <n>         Stop automatically after n seconds.
+                                   --raw                 Also print raw report bytes for vendor collections.
         """);
     }
 }

@@ -170,6 +170,31 @@ wire[10..11] media code (little-endian u16)
 버튼 매핑은 `src/RSoft.MacroPad.Cli/macros.yaml` (layer `1`) + `apply` 명령으로 기록했고,
 노브 스크롤은 위 마우스 휠 프로토콜로 기록했다.
 
+## 설정 조회(read-back) 가능 여부
+
+이 펌웨어에는 **저장된 매핑을 되돌려주는 커맨드가 없다.** 설정용 인터페이스(`mi_00`)는
+쓰기만 받는다. 따라서 현재 매핑을 확인하려면 키를 눌러 실제로 나오는 입력을 관찰해야 한다.
+
+HID 레벨 직접 읽기도 불가능하다. 실제 장치에서 각 컬렉션을 열어본 결과:
+
+| 컬렉션 | 장치 클래스 | 열기 결과 |
+| --- | --- | --- |
+| `MI_01 COL01` | Keyboard | 실패 (`kbdhid` 독점) |
+| `MI_01 COL02` | Mouse | 실패 (`mouhid` 독점) |
+| `MI_01 COL03` | Keyboard | 실패 |
+| `MI_01 COL04` | HIDClass | 성공 (input 3바이트) |
+| `MI_00` | HIDClass | 성공 (설정용, 65바이트) |
+
+버튼 입력(`COL01`/`COL03`)과 노브 스크롤(`COL02`)이 모두 Windows 드라이버에 독점 점유되어
+있어, 입력 관찰은 **Win32 Raw Input API**(`RIDEV_INPUTSINK` + message-only 윈도우)로만 가능하다.
+`RSoft.MacroPad.Cli` 의 `dump-input` 명령이 이 방식으로 구현되어 있다
+(`src/RSoft.MacroPad.Cli/Diagnostics/`).
+
+Raw Input 등록은 장치 단위가 아니라 usage page 단위이므로 다른 키보드/마우스 리포트도
+프로세스에 도달한다. `dump-input` 은 디코딩 전에 장치 핸들로 필터링하여 대상 매크로패드
+입력만 출력한다. 또한 Raw Input 은 대화형 window station 에 종속되므로, 서비스나 session 0
+컨텍스트에서 실행하면 장치 목록이 비어 있게 나온다.
+
 ## 참고 자료
 
 - [kriomant/ch57x-keyboard-tool](https://github.com/kriomant/ch57x-keyboard-tool) — 1189:8840 포함 지원, 마우스/휠 레이아웃 출처

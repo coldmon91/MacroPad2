@@ -88,8 +88,38 @@ dotnet src/RSoft.MacroPad.Cli/bin/Release/net6.0/RSoft.MacroPad.Cli.dll <command
 | `list-devices` | List all connected HID devices (VID/PID, usage page, product name). |
 | `apply <file.yaml>` | Write the mappings from the YAML file to a supported macro pad. |
 | `apply <file.yaml> --dry-run` | Build the reports and print them as hex, without opening or writing any device. |
+| `dump-input` | Print input reports as they arrive, to see what each key and the knob currently send. Windows only. |
 
 Always try `--dry-run` first to review the generated reports before writing to hardware.
+
+#### Inspecting the current mapping (`dump-input`)
+
+These pads have no read-back command: the firmware accepts bindings but never returns them,
+so the only way to inspect what is stored is to press each key and watch what it sends.
+`dump-input` does that, then decodes each report:
+
+```bash
+dotnet run --project src/RSoft.MacroPad.Cli -- dump-input
+# press each key and turn the knob, Ctrl+C to stop
+```
+
+| Option | Description |
+| --- | --- |
+| `--device <vid>:<pid>` | Watch this device only, decimal or `0x`-prefixed hex. Defaults to every device in `config.txt`. |
+| `--all` | Watch every raw input device, not only the supported ones. Useful to find an unlisted pad. |
+| `--seconds <n>` | Stop automatically after `n` seconds. |
+| `--raw` | Also print the raw report bytes of vendor/consumer collections. |
+
+Notes:
+
+- The pad's keyboard and mouse collections are claimed exclusively by the Windows `kbdhid`
+  and `mouhid` drivers, so they cannot be opened for reading. The command therefore uses the
+  Win32 Raw Input API instead.
+- Raw Input registers by usage page rather than by device, so reports from your other
+  keyboards and mice do reach the process; they are dropped by device handle before decoding,
+  and only the selected pad is ever printed.
+- Raw Input is bound to the interactive window station, so run this from a normal desktop
+  terminal. A session-0 or service context sees an empty device list.
 
 ### YAML format
 
